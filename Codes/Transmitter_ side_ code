@@ -1,0 +1,117 @@
+// Transmitter.ino
+#include <RH_ASK.h>
+#include <SPI.h>            // Required by RadioHead
+// Pins: data pin on transmitter module wired to Arduino digital pin 12 (change if needed)
+RH_ASK driver;
+
+const int alcoholPin = A0;   // MQ-3 analog
+const int wearPin    = A1;   // IR/obstacle sensor analog (wear detection)
+const int sleepPin   = A2;   // IR/obstacle sensor analog (eye/drowsiness)
+const int buzzerPin  = 7;    // local alarm in helmet
+const int ledPin     = 6;
+
+unsigned long eyeClosedStart = 0;
+bool eyeClosed = false;
+const unsigned long EYE_CLOSED_TIME_MS = 4000UL; // >4 seconds => drowsy
+
+// Drowsiness time-window logic
+const int DROWSINESS_COUNT_THRESHOLD = 5;       // number of sleep events within the window to mark drowsy
+const unsigned long DROWSINESS_WINDOW_MS = 10000UL; // 10s window
+unsigned long sleepEvents[20];
+int sleepEventIndex = 0;
+
+// --------- Alcohol calibration ----------
+/*
+ * MQ-3 outputs an analog ADC 0-1023. You must calibrate this value for your MQ-3 and setup.
+ * Set ALCOHOL_THRESHOLD_ADC so that values >= threshold correspond to ~0.03% BAC (30 mg/100ml).
+ * See calibration steps in notes below.
+ */
+int ALCOHOL_THRESHOLD_ADC = 250; // <-- default, **REPLACE** after calibration
+
+void setup() {
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(ledPin, OUTPUT);
+  digitalWrite(buzzerPin, LOW);
+  Serial.begin(9600);
+  if (!driver.init()) {
+    Serial.println("RF driver init failed");
+  } else {
+    Serial.println("RF driver ready");
+  }
+}
+
+void loop() {
+  int alcoholVal = analogRead(alcoholPin);
+  int wearVal = analogRead(wearPin);
+  int sleepVal = analogRead(sleepPin);
+
+  // Map/threshold - you may need to invert based on your IR module
+  bool helmetWorn = (wearVal > 400); // adjust per your sensor output (calibrate)
+  bool eyeClosedNow = (sleepVal < 300); // adjust per sensor: lower when eye closed (calibrate)
+
+  // Alcohol check
+  bool alcoholDetected = (alcoholVal >= ALCOHOL_THRESHOLD_ADC);
+
+  // Drowsiness continuous closure logic (>4s)
+  unsigned long now = millis();
+  static bool wasDrowsy = false;
+  if (eyeClosedNow) {
+    if (!eyeClosed) {
+      eyeClosed = true;
+      eyeClosedStart = now;
+    } else {
+      // already closed
+      if (!wasDrowsy && (now - eyeClosedStart >= EYE_CLOSED_TIME_MS)) {
+        // register a drowsy event
+        registerSleepEvent(now);
+        wasDrowsy = true;
+      }
+    }
+  } else {
+    // eye open
+    if (eyeClosed) {
+      // short blink: still could be counted as micro-sleep if desired
+      registerSleepEvent(now);
+    }
+    eyeClosed = false;
+    wasDrowsy = false;
+  }
+
+  // Evaluate drowsiness threshold in a sliding window
+  bool drowsy = evaluateDrowsiness(now);
+
+  // Local alarm (helmet) for immediate feedback
+  if (alcoholDetected || drowsy || !helmetWorn) {
+    digitalWrite(buzzerPin, HIGH);
+    digitalWrite(ledPin, HIGH);
+  } else {
+    digitalWrite(buzzerPin, LOW);
+    digitalWrite(ledPin, LOW);
+  }
+
+  // Prepare message, simple CSV-style: ALC:0/1,WORN:0/1,DRWSY:0/1,ADC:xxx
+  char msg[80];
+  snprintf(msg, sizeof(msg), "ALC:%d,WORN:%d,DRW:%d,ADC:%d", alcoholDetected, helmetWorn, drowsy, alcoholVal);
+
+  // Send via RF
+  driver.send((uint8_t *)msg, strlen(msg));
+  driver.waitPacketSent();
+
+  // Debug
+  Serial.println(msg);
+
+  delay(500); // adjust send interval
+}
+
+void registerSleepEvent(unsigned long ts) {
+  sleepEvents[sleepEventIndex++ % 20] = ts;
+}
+
+bool evaluateDrowsiness(unsigned long now) {
+  int count = 0;
+  for (int i = 0; i < 20; ++i) {
+    if (sleepEvents[i] == 0) continue;
+    if (now - sleepEvents[i] <= DROWSINESS_WINDOW_MS) count++;
+  }
+  return (count >= DROWSINESS_COUNT_THRESHOLD);
+}

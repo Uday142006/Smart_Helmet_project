@@ -1,0 +1,103 @@
+// Receiver.ino
+#include <RH_ASK.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+RH_ASK driver;
+LiquidCrystal_I2C lcd(0x27, 16, 2); // change I2C address if needed
+
+const int relayPin = 4;    // relay to simulate engine lock
+const int buzzerPin = 5;   // buzzer on vehicle
+const int ledPin = 8;
+
+void setup() {
+  pinMode(relayPin, OUTPUT);
+  pinMode(buzzerPin, OUTPUT);
+  pinMode(ledPin, OUTPUT);
+  digitalWrite(relayPin, LOW); // engine allowed initially (or set as needed)
+  digitalWrite(buzzerPin, LOW);
+  Serial.begin(9600);
+  lcd.init();
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("Smart Helmet Rx");
+  if (!driver.init()) {
+    Serial.println("RF init failed");
+    lcd.setCursor(0,1);
+    lcd.print("RF init fail");
+  }
+}
+
+void loop() {
+  uint8_t buf[64];
+  uint8_t buflen = sizeof(buf);
+  if (driver.recv(buf, &buflen)) {
+    buf[buflen] = 0; // null-terminate
+    String msg = String((char*)buf);
+    Serial.println("Received: " + msg);
+    handleMessage(msg);
+  }
+}
+
+void handleMessage(String &msg) {
+  // Parse message like: "ALC:1,WORN:0,DRW:1,ADC:345"
+  int alc = parseFlag(msg, "ALC:");
+  int worn = parseFlag(msg, "WORN:");
+  int drw = parseFlag(msg, "DRW:");
+  int adc = parseValue(msg, "ADC:");
+
+  lcd.clear();
+  lcd.setCursor(0,0);
+  lcd.print("A:");
+  lcd.print(alc ? "YES " : "NO  ");
+  lcd.print(" W:");
+  lcd.print(worn ? "ON" : "OFF");
+
+  lcd.setCursor(0,1);
+  lcd.print("D:");
+  lcd.print(drw ? "YES" : "NO ");
+  lcd.print(" ADC:");
+  lcd.print(adc);
+
+  // Actions:
+  if (alc) {
+    // alcohol detected -> bell + disable engine
+    digitalWrite(buzzerPin, HIGH);
+    digitalWrite(ledPin, HIGH);
+    digitalWrite(relayPin, HIGH); // trip relay: cut engine (wired as needed)
+  } else if (!worn) {
+    // helmet not worn -> disable engine
+    digitalWrite(buzzerPin, HIGH);
+    digitalWrite(relayPin, HIGH);
+    digitalWrite(ledPin, HIGH);
+  } else if (drw) {
+    // drowsy -> alarm and optionally prevent start
+    digitalWrite(buzzerPin, HIGH);
+    digitalWrite(relayPin, HIGH);
+    digitalWrite(ledPin, HIGH);
+  } else {
+    // OK
+    digitalWrite(buzzerPin, LOW);
+    digitalWrite(relayPin, LOW);
+    digitalWrite(ledPin, LOW);
+  }
+}
+
+int parseFlag(String &s, const char *key) {
+  int idx = s.indexOf(key);
+  if (idx < 0) return 0;
+  int start = idx + strlen(key);
+  if (start >= s.length()) return 0;
+  return s.charAt(start) - '0';
+}
+
+int parseValue(String &s, const char *key) {
+  int idx = s.indexOf(key);
+  if (idx < 0) return 0;
+  int start = idx + strlen(key);
+  int end = s.indexOf(',', start);
+  if (end < 0) end = s.length();
+  return s.substring(start, end).toInt();
+}
