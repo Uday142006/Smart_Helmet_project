@@ -1,4 +1,4 @@
-                                                          MUST READ
+                                                          MUSTREAD
 Smart Helmet Using Arduino 🛵🪖  
 A College Tech Fest Hardware Project (4th Position Winner) 🎉🏅
 
