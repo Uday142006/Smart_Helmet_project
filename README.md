@@ -93,8 +93,6 @@ Acknowledgement 🙏
 Proudly developed for our college tech fest hardware competition, winning the 4th position! Thanks to all teammates and mentors for the support! 🌟🎖
 
 Reference 📚
-Documentation: How to Build a Smart Helmet using Arduino?​
+Documentation: https://circuitdigest.com/microcontroller-projects/smart-helmet-using-arduino
 
-Video Demo: Get Chrome for your computer​
-
-This 
+Video Demo: https://www.youtube.com/watch?v=iRjUAR8dogc
